@@ -101,4 +101,26 @@ router.post("/:id/cancel", authRequired, roleRequired("player"), async (req, res
   res.json({ booking });
 });
 
+// DELETE booking permanently (player only)
+router.delete("/:id", authRequired, async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+
+    if (!booking) {
+      return res.status(404).json({ message: "Booking not found" });
+    }
+
+    // ensure player owns this booking
+    if (booking.playerId.toString() !== req.user.userId) {
+      return res.status(403).json({ message: "Not allowed" });
+    }
+
+    await booking.deleteOne();
+    res.json({ message: "Booking removed permanently" });
+  } catch (err) {
+    res.status(500).json({ message: "Delete failed" });
+  }
+});
+
+
 export default router;
