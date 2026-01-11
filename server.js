@@ -9,6 +9,13 @@ import clubManageRoutes from "./src/routes/club.manage.routes.js";
 import bookingRoutes from "./src/routes/booking.routes.js";
 import paymentRoutes from "./src/routes/payment.routes.js";
 import receiptRoutes from "./src/routes/receipt.routes.js";
+import accessoryRoutes from "./src/routes/accessory.routes.js";
+import coachRoutes from "./src/routes/coach.routes.js";
+import clubAnalyticsRoutes from "./src/routes/club.analytics.routes.js";
+import clubPaymentsRoutes from "./src/routes/club.payments.routes.js";
+
+
+
 
 
 dotenv.config();
@@ -23,7 +30,10 @@ app.use("/api/club", clubManageRoutes);
 app.use("/api/bookings", bookingRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/receipts", receiptRoutes);
-
+app.use("/api/accessories", accessoryRoutes);
+app.use("/api/coaches", coachRoutes);
+app.use("/api/club", clubAnalyticsRoutes);
+app.use("/api/club/payments", clubPaymentsRoutes);
 
 
 

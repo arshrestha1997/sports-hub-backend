@@ -1,17 +1,27 @@
 import mongoose from "mongoose";
 
 const facilitySchema = new mongoose.Schema(
-  { sport: String, name: String, hourlyPrice: Number },
+  {
+    name: { type: String, required: true },
+    sport: { type: String, required: true },
+    hourlyPrice: { type: Number, required: true }
+  },
   { _id: true }
 );
 
 const clubSchema = new mongoose.Schema(
   {
+    // Club basic info
     name: { type: String, required: true },
     location: { type: String, required: true },
+
+    // Admin approval
     approved: { type: Boolean, default: false },
-    commissionRate: { type: Number, default: 0.15 }, // 15% default
+
+    // Optional: sports offered (used for filtering/search)
     sports: [{ type: String }],
+
+    // Facilities managed by club
     facilities: [facilitySchema],
   },
   { timestamps: true }
