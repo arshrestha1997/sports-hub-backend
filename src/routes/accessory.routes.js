@@ -131,23 +131,43 @@ router.post("/order/:id/cancel", authRequired, roleRequired("player"), async (re
   res.json({ order });
 });
 
-// DELETE accessory order permanently (player only)
-router.delete("/order/:id", authRequired, async (req, res) => {
+/* ================= UPDATE ACCESSORY ================= */
+router.put("/:id", authRequired, roleRequired("club"), async (req, res) => {
   try {
-    const order = await AccessoryOrder.findById(req.params.id);
+    const item = await Accessory.findById(req.params.id);
+    if (!item) return res.status(404).json({ message: "Accessory not found" });
 
-    if (!order) {
-      return res.status(404).json({ message: "Order not found" });
-    }
-
-    if (order.playerId.toString() !== req.user.userId) {
+    if (item.clubId.toString() !== req.user.clubId) {
       return res.status(403).json({ message: "Not allowed" });
     }
 
-    await order.deleteOne();
-    res.json({ message: "Accessory order removed permanently" });
+    Object.assign(item, req.body);
+    await item.save();
+
+    res.json({ item });
   } catch (err) {
-    res.status(500).json({ message: "Delete failed" });
+    res.status(500).json({ message: "Failed to update accessory" });
+  }
+});
+
+/* ================= DELETE ACCESSORY ================= */
+router.delete("/:id", authRequired, roleRequired("club"), async (req, res) => {
+  try {
+    const item = await Accessory.findById(req.params.id);
+    if (!item) return res.status(404).json({ message: "Accessory not found" });
+
+    if (item.clubId.toString() !== req.user.clubId) {
+      return res.status(403).json({ message: "Not allowed" });
+    }
+
+    await item.deleteOne();
+
+    // optional: clean related orders
+    await AccessoryOrder.deleteMany({ accessoryId: item._id });
+
+    res.json({ message: "Accessory deleted" });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to delete accessory" });
   }
 });
 

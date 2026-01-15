@@ -6,6 +6,24 @@ import { authRequired, roleRequired } from "../middleware/auth.js";
 
 const router = Router();
 
+/* ================= GET MY COACHES (CLUB) ================= */
+router.get(
+  "/me",
+  authRequired,
+  roleRequired("club"),
+  async (req, res) => {
+    try {
+      const coaches = await Coach.find({
+        clubId: req.user.clubId,
+      }).sort({ createdAt: -1 });
+
+      res.json({ coaches });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to load coaches" });
+    }
+  }
+);
+
 /* ===============================
    GET coaches by club (public)
    GET /api/coaches/club/:clubId
@@ -155,23 +173,43 @@ router.get("/bookings/me", authRequired, roleRequired("player"), async (req, res
   }
 });
 
-// DELETE coach booking permanently (player only)
-router.delete("/booking/:id", authRequired, async (req, res) => {
+/* ================= UPDATE COACH ================= */
+router.put("/:id", authRequired, roleRequired("club"), async (req, res) => {
   try {
-    const booking = await CoachBooking.findById(req.params.id);
+    const coach = await Coach.findById(req.params.id);
+    if (!coach) return res.status(404).json({ message: "Coach not found" });
 
-    if (!booking) {
-      return res.status(404).json({ message: "Coach booking not found" });
-    }
-
-    if (booking.playerId.toString() !== req.user.userId) {
+    if (coach.clubId.toString() !== req.user.clubId) {
       return res.status(403).json({ message: "Not allowed" });
     }
 
-    await booking.deleteOne();
-    res.json({ message: "Coach booking removed permanently" });
+    Object.assign(coach, req.body);
+    await coach.save();
+
+    res.json({ coach });
   } catch (err) {
-    res.status(500).json({ message: "Delete failed" });
+    res.status(500).json({ message: "Failed to update coach" });
+  }
+});
+
+/* ================= DELETE COACH ================= */
+router.delete("/:id", authRequired, roleRequired("club"), async (req, res) => {
+  try {
+    const coach = await Coach.findById(req.params.id);
+    if (!coach) return res.status(404).json({ message: "Coach not found" });
+
+    if (coach.clubId.toString() !== req.user.clubId) {
+      return res.status(403).json({ message: "Not allowed" });
+    }
+
+    await coach.deleteOne();
+
+    // optional: clean bookings
+    await CoachBooking.deleteMany({ coachId: coach._id });
+
+    res.json({ message: "Coach deleted" });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to delete coach" });
   }
 });
 
