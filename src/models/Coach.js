@@ -22,20 +22,22 @@ const classSessionSchema = new mongoose.Schema(
 
 const coachSchema = new mongoose.Schema(
   {
+    // IMPORTANT: your backend uses Club collection for clubId
     clubId: { type: mongoose.Schema.Types.ObjectId, ref: "Club", required: true },
+
     name: { type: String, required: true },
     sport: { type: String, required: true },
 
     personalEnabled: { type: Boolean, default: true },
     personalRatePerHour: { type: Number, default: 0 },
 
-    // ✅ weekly personal availability
+    // ✅ Frontend sends: [{ day, startMin, endMin }]
     personalAvailability: { type: [weeklyWindowSchema], default: [] },
 
     classEnabled: { type: Boolean, default: true },
     classPrice: { type: Number, default: 0 },
 
-    // ✅ scheduled class sessions
+    // ✅ Frontend expects class sessions in this format
     classSessions: { type: [classSessionSchema], default: [] },
 
     active: { type: Boolean, default: true },

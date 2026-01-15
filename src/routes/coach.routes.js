@@ -7,22 +7,185 @@ import { authRequired, roleRequired } from "../middleware/auth.js";
 const router = Router();
 
 /* ================= GET MY COACHES (CLUB) ================= */
-router.get(
-  "/me",
-  authRequired,
-  roleRequired("club"),
-  async (req, res) => {
-    try {
-      const coaches = await Coach.find({
-        clubId: req.user.clubId,
-      }).sort({ createdAt: -1 });
-
-      res.json({ coaches });
-    } catch (err) {
-      res.status(500).json({ message: "Failed to load coaches" });
-    }
+router.get("/me", authRequired, roleRequired("club"), async (req, res) => {
+  try {
+    const coaches = await Coach.find({ clubId: req.user.clubId }).sort({ createdAt: -1 });
+    res.json({ coaches });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to load coaches" });
   }
-);
+});
+
+/* ================= CREATE COACH (CLUB) ================= */
+const createCoachSchema = z.object({
+  name: z.string().min(1),
+  sport: z.string().min(1),
+  personalEnabled: z.coerce.boolean().optional().default(false),
+  personalRatePerHour: z.coerce.number().nonnegative().optional().default(0),
+  classEnabled: z.coerce.boolean().optional().default(false),
+  classPrice: z.coerce.number().nonnegative().optional().default(0),
+});
+
+router.post("/", authRequired, roleRequired("club"), async (req, res) => {
+  try {
+    const parsed = createCoachSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Invalid data",
+        issues: parsed.error.issues?.map((i) => ({ path: i.path, message: i.message })),
+      });
+    }
+
+    const coach = await Coach.create({
+      ...parsed.data,
+      clubId: req.user.clubId, // ✅ correct for your JWT payload
+    });
+
+    res.status(201).json({ coach });
+  } catch (err) {
+    console.error("ADD COACH ERROR:", err);
+    res.status(500).json({ message: err.message || "Failed to add coach" });
+  }
+});
+
+/* ================= UPDATE COACH ================= */
+router.put("/:id", authRequired, roleRequired("club"), async (req, res) => {
+  try {
+    const coach = await Coach.findById(req.params.id);
+    if (!coach) return res.status(404).json({ message: "Coach not found" });
+
+    if (coach.clubId.toString() !== req.user.clubId) {
+      return res.status(403).json({ message: "Not allowed" });
+    }
+
+    // allow updating these fields only (safe)
+    const allowed = ["name", "sport", "personalEnabled", "personalRatePerHour", "classEnabled", "classPrice", "active"];
+    for (const k of allowed) {
+      if (k in req.body) coach[k] = req.body[k];
+    }
+
+    await coach.save();
+    res.json({ coach });
+  } catch (err) {
+    console.error("UPDATE COACH ERROR:", err);
+    res.status(500).json({ message: "Failed to update coach" });
+  }
+});
+
+/* ================= SAVE PERSONAL AVAILABILITY (CLUB) =================
+   FRONTEND CALLS:
+   PUT /api/coaches/:id/personal-availability
+   body: { personalAvailability: [{day, startMin, endMin}] }
+====================================================== */
+const windowSchema = z.object({
+  day: z.coerce.number().int().min(0).max(6),
+  startMin: z.coerce.number().int().min(0).max(1439),
+  endMin: z.coerce.number().int().min(1).max(1440),
+});
+
+router.put("/:id/personal-availability", authRequired, roleRequired("club"), async (req, res) => {
+  try {
+    const coach = await Coach.findById(req.params.id);
+    if (!coach) return res.status(404).json({ message: "Coach not found" });
+
+    if (coach.clubId.toString() !== req.user.clubId) {
+      return res.status(403).json({ message: "Not allowed" });
+    }
+
+    const parsed = z
+      .object({ personalAvailability: z.array(windowSchema) })
+      .safeParse(req.body);
+
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Invalid availability payload",
+        issues: parsed.error.issues?.map((i) => ({ path: i.path, message: i.message })),
+      });
+    }
+
+    // validate logical time ordering
+    for (const w of parsed.data.personalAvailability) {
+      if (w.startMin >= w.endMin) {
+        return res.status(400).json({ message: "Availability window startMin must be < endMin" });
+      }
+    }
+
+    coach.personalAvailability = parsed.data.personalAvailability;
+    await coach.save();
+
+    res.json({ coach });
+  } catch (err) {
+    console.error("SAVE PERSONAL AVAILABILITY ERROR:", err);
+    res.status(500).json({ message: "Failed to save availability" });
+  }
+});
+
+/* ================= ADD CLASS SESSION (CLUB) =================
+   FRONTEND CALLS:
+   POST /api/coaches/:id/class-sessions
+   body: { startTime, endTime, maxPeople }
+====================================================== */
+const classAddSchema = z.object({
+  startTime: z.string(),
+  endTime: z.string(),
+  maxPeople: z.coerce.number().int().min(1),
+});
+
+router.post("/:id/class-sessions", authRequired, roleRequired("club"), async (req, res) => {
+  try {
+    const coach = await Coach.findById(req.params.id);
+    if (!coach) return res.status(404).json({ message: "Coach not found" });
+
+    if (coach.clubId.toString() !== req.user.clubId) {
+      return res.status(403).json({ message: "Not allowed" });
+    }
+
+    const parsed = classAddSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Invalid class session payload",
+        issues: parsed.error.issues?.map((i) => ({ path: i.path, message: i.message })),
+      });
+    }
+
+    const s = new Date(parsed.data.startTime);
+    const e = new Date(parsed.data.endTime);
+    if (isNaN(s) || isNaN(e) || s >= e) {
+      return res.status(400).json({ message: "Invalid session time range" });
+    }
+
+    coach.classSessions.push({
+      startTime: s,
+      endTime: e,
+      maxPeople: parsed.data.maxPeople,
+    });
+
+    await coach.save();
+    res.json({ coach });
+  } catch (err) {
+    console.error("ADD CLASS SESSION ERROR:", err);
+    res.status(500).json({ message: "Failed to add class session" });
+  }
+});
+
+/* ================= DELETE COACH ================= */
+router.delete("/:id", authRequired, roleRequired("club"), async (req, res) => {
+  try {
+    const coach = await Coach.findById(req.params.id);
+    if (!coach) return res.status(404).json({ message: "Coach not found" });
+
+    if (coach.clubId.toString() !== req.user.clubId) {
+      return res.status(403).json({ message: "Not allowed" });
+    }
+
+    await coach.deleteOne();
+    await CoachBooking.deleteMany({ coachId: coach._id });
+
+    res.json({ message: "Coach deleted" });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to delete coach" });
+  }
+});
 
 /* ===============================
    GET coaches by club (public)
@@ -50,9 +213,6 @@ router.get("/:id/availability", async (req, res) => {
 /* ===============================
    PLAYER: Book Coach
    POST /api/coaches/book
-   body:
-     - personal: { coachId, type:"personal", startTime, endTime }
-     - class:    { coachId, type:"class", sessionId, participants }
 ================================ */
 const bookSchema = z.object({
   coachId: z.string(),
@@ -78,7 +238,6 @@ router.post("/book", authRequired, roleRequired("player"), async (req, res) => {
     const coach = await Coach.findById(coachId);
     if (!coach) return res.status(404).json({ message: "Coach not found" });
 
-    // ✅ IMPORTANT: your JWT payload has userId (NOT id)
     const playerId = req.user.userId;
 
     // -------- PERSONAL BOOKING --------
@@ -89,16 +248,14 @@ router.post("/book", authRequired, roleRequired("player"), async (req, res) => {
 
       const s = new Date(startTime);
       const e = new Date(endTime);
-
       if (isNaN(s) || isNaN(e) || s >= e) {
         return res.status(400).json({ message: "Invalid personal booking time range" });
       }
 
-      // (simple pricing – you can improve later based on duration)
       const total = Number(coach.personalRatePerHour || 0);
 
       const booking = await CoachBooking.create({
-        playerId, // ✅ FIXED
+        playerId,
         clubId: coach.clubId,
         coachId: coach._id,
         type: "personal",
@@ -128,14 +285,13 @@ router.post("/book", authRequired, roleRequired("player"), async (req, res) => {
       return res.status(400).json({ message: "Not enough spots left in this class session" });
     }
 
-    // update booked people
     session.bookedPeople = booked + p;
     await coach.save();
 
     const total = Number(coach.classPrice || 0) * p;
 
     const booking = await CoachBooking.create({
-      playerId, // ✅ FIXED
+      playerId,
       clubId: coach.clubId,
       coachId: coach._id,
       type: "class",
@@ -159,7 +315,6 @@ router.post("/book", authRequired, roleRequired("player"), async (req, res) => {
 ================================ */
 router.get("/bookings/me", authRequired, roleRequired("player"), async (req, res) => {
   try {
-    // ✅ IMPORTANT: your JWT payload has userId (NOT id)
     const playerId = req.user.userId;
 
     const bookings = await CoachBooking.find({ playerId })
@@ -172,46 +327,5 @@ router.get("/bookings/me", authRequired, roleRequired("player"), async (req, res
     res.status(500).json({ message: "Failed to load coach bookings" });
   }
 });
-
-/* ================= UPDATE COACH ================= */
-router.put("/:id", authRequired, roleRequired("club"), async (req, res) => {
-  try {
-    const coach = await Coach.findById(req.params.id);
-    if (!coach) return res.status(404).json({ message: "Coach not found" });
-
-    if (coach.clubId.toString() !== req.user.clubId) {
-      return res.status(403).json({ message: "Not allowed" });
-    }
-
-    Object.assign(coach, req.body);
-    await coach.save();
-
-    res.json({ coach });
-  } catch (err) {
-    res.status(500).json({ message: "Failed to update coach" });
-  }
-});
-
-/* ================= DELETE COACH ================= */
-router.delete("/:id", authRequired, roleRequired("club"), async (req, res) => {
-  try {
-    const coach = await Coach.findById(req.params.id);
-    if (!coach) return res.status(404).json({ message: "Coach not found" });
-
-    if (coach.clubId.toString() !== req.user.clubId) {
-      return res.status(403).json({ message: "Not allowed" });
-    }
-
-    await coach.deleteOne();
-
-    // optional: clean bookings
-    await CoachBooking.deleteMany({ coachId: coach._id });
-
-    res.json({ message: "Coach deleted" });
-  } catch (err) {
-    res.status(500).json({ message: "Failed to delete coach" });
-  }
-});
-
 
 export default router;
