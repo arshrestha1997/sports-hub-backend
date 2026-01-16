@@ -1,52 +1,108 @@
 import { Router } from "express";
 import { z } from "zod";
 import { authRequired, roleRequired } from "../middleware/auth.js";
+
 import Booking from "../models/Booking.js";
+import AccessoryOrder from "../models/AccessoryOrder.js";
+import CoachBooking from "../models/CoachBooking.js";
+
 import Club from "../models/Club.js";
 import Payment from "../models/Payment.js";
 
 const router = Router();
 
+/**
+ * Accepts BOTH:
+ * - old: { bookingId, method }
+ * - new: { itemType, itemId, method }
+ */
 const paySchema = z.object({
-  bookingId: z.string(),
+  bookingId: z.string().optional(), // legacy
+  itemType: z.enum(["facility", "accessory", "coach"]).optional(),
+  itemId: z.string().optional(),
   method: z.string().optional(),
 });
 
-// Player pays for a booking (mock)
+// Player pays for a booking/order (mock)
 router.post("/pay", authRequired, roleRequired("player"), async (req, res) => {
   try {
-    const { bookingId, method } = paySchema.parse(req.body);
+    const data = paySchema.parse(req.body);
 
-    const booking = await Booking.findOne({ _id: bookingId, playerId: req.user.userId });
-    if (!booking) return res.status(404).json({ message: "Booking not found" });
-    if (booking.status === "cancelled") return res.status(400).json({ message: "Booking cancelled" });
-    if (booking.status === "paid") return res.status(400).json({ message: "Already paid" });
+    // ✅ normalize inputs
+    const payableType = data.itemType || "facility";
+    const payableId = data.itemId || data.bookingId;
 
-    const club = await Club.findById(booking.clubId);
+    if (!payableId) {
+      return res.status(400).json({ message: "Missing booking/order id" });
+    }
+
+    const playerId = req.user.userId;
+
+    // ✅ pick model based on payableType
+    let item = null;
+
+    if (payableType === "facility") {
+      item = await Booking.findOne({ _id: payableId, playerId });
+      if (!item) return res.status(404).json({ message: "Facility booking not found" });
+      if (item.status === "cancelled") return res.status(400).json({ message: "Booking cancelled" });
+      if (item.status === "paid") return res.status(400).json({ message: "Already paid" });
+    }
+
+    if (payableType === "accessory") {
+      item = await AccessoryOrder.findOne({ _id: payableId, playerId });
+      if (!item) return res.status(404).json({ message: "Accessory order not found" });
+      if (item.status === "cancelled") return res.status(400).json({ message: "Order cancelled" });
+      if (item.status === "paid") return res.status(400).json({ message: "Already paid" });
+    }
+
+    if (payableType === "coach") {
+      item = await CoachBooking.findOne({ _id: payableId, playerId });
+      if (!item) return res.status(404).json({ message: "Coach booking not found" });
+      if (item.status === "cancelled") return res.status(400).json({ message: "Booking cancelled" });
+      if (item.status === "paid") return res.status(400).json({ message: "Already paid" });
+    }
+
+    const club = await Club.findById(item.clubId);
     if (!club) return res.status(404).json({ message: "Club not found" });
     if (!club.approved) return res.status(400).json({ message: "Club not approved" });
 
-    const amount = Number(booking.pricing.total);
+    // ✅ read amount from each type
+    const amount =
+      payableType === "facility"
+        ? Number(item.pricing?.total || 0)
+        : Number(item.pricing?.total || 0);
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: "Invalid amount" });
+    }
+
     const commissionRate = Number(club.commissionRate ?? 0.15);
     const adminFee = Math.round(amount * commissionRate * 100) / 100;
     const clubEarning = Math.round((amount - adminFee) * 100) / 100;
 
-    booking.status = "paid";
-    await booking.save();
+    // ✅ set item as paid
+    item.status = "paid";
+    await item.save();
 
+    // ✅ record payment
     const payment = await Payment.create({
-      bookingId: booking._id,
-      playerId: booking.playerId,
-      clubId: booking.clubId,
+      payableType,
+      payableId: item._id,
+
+      // legacy field (only for facilities)
+      bookingId: payableType === "facility" ? item._id : undefined,
+
+      playerId: item.playerId,
+      clubId: item.clubId,
       amount,
-      method: method || "card",
+      method: data.method || "card",
       status: "paid",
       commissionRate,
       adminFee,
       clubEarning,
     });
 
-    res.json({ message: "Paid", booking, payment });
+    res.json({ message: "Paid", payableType, item, payment });
   } catch (err) {
     res.status(400).json({ message: err.message || "Payment failed" });
   }

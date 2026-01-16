@@ -2,7 +2,21 @@ import mongoose from "mongoose";
 
 const paymentSchema = new mongoose.Schema(
   {
-    bookingId: { type: mongoose.Schema.Types.ObjectId, ref: "Booking", required: true },
+    // ✅ NEW: pay any type of item
+    payableType: {
+      type: String,
+      enum: ["facility", "accessory", "coach"],
+      required: true,
+    },
+
+    payableId: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: true,
+    },
+
+    // ✅ keep old field optional so nothing breaks if old docs exist
+    bookingId: { type: mongoose.Schema.Types.ObjectId, ref: "Booking", required: false },
+
     playerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     clubId: { type: mongoose.Schema.Types.ObjectId, ref: "Club", required: true },
 
